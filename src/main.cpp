@@ -9,17 +9,143 @@
 #define _USE_MATH_DEFINES
 #include <cmath> 
 #include <math.h>
+#include <random>
+#include <thread>
 
 #include <SDL.h>
 
-struct Pixel24 {
+#pragma pack(push)  /* push current alignment to stack */
+#pragma pack(1)     /* set alignment to 1 byte boundary */
+
+struct Pixel32 {
     unsigned char b;
     unsigned char g;
     unsigned char r;
     unsigned char a;
 };
 
-const int window_size = 640;
+#pragma pack(pop)   /* restore original alignment from stack */
+
+const int window_size = 256;
+template<typename T> T sqr(const T& x) { return x * x; }
+
+template double sqr<double>(const double&);
+
+std::random_device rd;
+std::mt19937 gen(rd());
+std::uniform_real_distribution<> urd(0.0, 1.0);
+
+
+struct XY {
+    double x;
+    double y;
+
+    XY() : x(0), y(0) {}
+    XY(const double &xy_) : x(xy_), y(xy_) {}
+    XY(const double &x_, const double &y_) : x(x_), y(y_) {}
+    XY(const struct XY &xy_) : x(xy_.x), y(xy_.y) {}
+    ~XY() {}
+
+    void rand(const struct XY &offset, const struct XY &amplitude) 
+    { 
+        x = urd(gen) * amplitude.x + offset.x;
+        y = urd(gen) * amplitude.y + offset.y;
+    }
+    void rand_angle(const double &amplitude)
+    {
+        double a = urd(gen) * 2*M_PI;
+        double l = amplitude;
+        x = l * sin(a);
+        y = l * cos(a);
+    }
+
+    double dist2(const struct XY &xy_) const
+    {
+        return sqr(x - xy_.x) + sqr(y - xy_.y);
+    }
+
+    double rad2() const
+    {
+        return sqr(x) + sqr(y);
+    }
+
+    double dist(const struct XY &xy_) const
+    {
+        return sqrt(sqr(x - xy_.x) + sqr(y - xy_.y));
+    }
+
+    double rad() const
+    {
+        return sqrt(sqr(x) + sqr(y));
+    }
+
+    XY mul(const double &d) const
+    {
+        return XY(x*d, y*d);
+    }
+};
+
+std::ostream& operator<<(std::ostream &os, const struct XY &xy_) {
+    return os << '{' << xy_.x << ", "  << xy_.y << '}';
+}
+
+std::ostream& operator<<(std::ostream &os, struct SDL_Surface* s) {
+    if(s == nullptr)
+        return os << "{ null }";
+    else
+        return os << "{ size: {" << s->w << ", "  << s->h << "}, pitch: " << s->pitch << ", bytesPerPixel: " << int(s->format->BytesPerPixel) << '}';
+}
+
+double sgn(const double &x)
+{
+    return x < 0.0 ? -1.0 : x > 0.0 ? 1.0 : 0.0;
+}
+
+void update_xy_pos_by_velovity(struct XY &pos, struct XY &vel, double time_step)
+{
+    double ax = ((1.0 - 2 * pos.x)*2 - vel.x*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
+    double ay = ((1.0 - 2 * pos.y)*2 - vel.y*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
+    vel.x += ax*time_step;
+    vel.y += ay*time_step;
+    if(vel.rad() < 10.0 / window_size)
+        vel.rand_angle(500.0/window_size);
+
+    pos.x += vel.x * time_step;
+    pos.y += vel.y * time_step;
+    if(pos.x > 1.0) {
+        pos.x = 1.0;
+        vel.x = -vel.x;
+    }
+    if(pos.x < 0.0) {
+        pos.x = 0.0;
+        vel.x = -vel.x;
+    }
+    if(pos.y > 1.0) {
+        pos.y = 1.0;
+        vel.y = -vel.y;
+    }
+    if(pos.y < 0.0) {
+        pos.y = 0.0;
+        vel.y = -vel.y;
+    }
+}
+
+unsigned char to_lum(const struct XY& pos, const struct XY& p, const struct XY& v) {
+    double d2 = pos.dist2(p);
+    double r2 = v.rad2();
+    return d2 < r2 ? (unsigned char)(((r2 - d2) / r2) * 0xff) : 0x00;
+
+}
+
+double cap(const double& x)
+{
+    return x < 0.0 ? 0.0 : x > 1.0 ? 1.0 : x;
+}
+
+double inv_sqr(const double &x)
+{
+    return fabs(x) < 1e-8 ? 0 : 1/sqr(x);
+}
 
 int main(int argc, const char** argv)
 {
@@ -40,9 +166,10 @@ int main(int argc, const char** argv)
     }
 
     SDL_Surface *scr = SDL_GetWindowSurface(win);
+    SDL_Surface *img = SDL_CreateRGBSurface(0, window_size, window_size, 32, 0, 0, 0, 0);
 
-    SDL_Surface *img = SDL_CreateRGBSurface(0, window_size, window_size, 32, 0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff);
-    SDL_LockSurface(img);
+    std::cout << "Screen: " << scr << std::endl;
+    std::cout << "Image: " << img << std::endl;
 
     auto start = std::chrono::system_clock::now();
     auto last = start;
@@ -51,51 +178,93 @@ int main(int argc, const char** argv)
 
     int count = 0;
     int last_count = count;
-    int offset = 0;
-    int offset_step = 1;
+    double time_step = 0.0;
+
     SDL_Event event;
-    while(1)
+
+    XY pr, pb, pg;
+    XY vr, vb, vg;
+
+    pr.rand(XY(0.5), XY(0.5));
+    pg.rand(XY(0.5), XY(0.5));
+    pb.rand(XY(0.5), XY(0.5));
+
+    vr.rand_angle(100.0 / window_size);
+    vg.rand_angle(100.0 / window_size);
+    vb.rand_angle(100.0 / window_size);
+
+    bool run = true;
+    while(run)
     {
         ++count;
-        offset += offset_step;
+
+        SDL_LockSurface(img);
         for(int y = 0; y < img->h; ++y) {
             for(int x = 0; x < img->w; ++x) {
-                unsigned char* pixel = (unsigned char*)(scr->pixels) + x * 4 + y * img->pitch;
-                Pixel24* px24 = (Pixel24*)pixel;
-                px24->r = (unsigned char)((sin((offset * 3+x+y) * M_PI/window_size) + 1) * 127);
-                px24->g = (unsigned char)((sin((offset * 5+x+y*2) * M_PI/window_size) + 1) * 127);
-                px24->b = (unsigned char)((sin((offset * 7+x*2+y) * M_PI/window_size) + 1) * 127);
-                // px24->r = (offset+x+y) & 0xff;
-                // px24->g = (offset+x+y*2) & 0xff;
-                // px24->b = (offset+x*2+y) & 0xff;
+                XY pos(double(x) / window_size, double(y) / window_size);
+                unsigned char* pixel = (unsigned char*)(img->pixels) + x * 4 + y * img->pitch;
+
+                double dr = pos.dist(pr);
+                double dg = pos.dist(pg);
+                double db = pos.dist(pb);
+                double d = (inv_sqr(dr)+inv_sqr(dg)+inv_sqr(db))/3.0;
+                double dp = inv_sqr(3-d*0.3) + d*0.1;
+                double dpr = inv_sqr(dr*20);
+                double dpg = inv_sqr(dg*20);
+                double dpb = inv_sqr(db*20);
+                unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
+                unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
+                unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
+
+                *((Uint32*)pixel) = SDL_MapRGBA(img->format, lumr, lumg, lumb, 0x00);
             }
         }
-
         SDL_UnlockSurface(img);
 
-        SDL_BlitSurface(img, &rect, scr, &rect);
+        SDL_BlitSurface(img, nullptr, scr, nullptr);
 
         SDL_UpdateWindowSurface(win);
 
-        /* Any of these event types will end the program */
-        if(SDL_PollEvent(&event)) {
+        while(SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT
              || event.type == SDL_KEYDOWN
-             || event.type == SDL_KEYUP)
+             || event.type == SDL_KEYUP) {
+                run = false;
                 break;
+            }
         }
+
+        update_xy_pos_by_velovity(pr, vr, time_step);
+        update_xy_pos_by_velovity(pg, vg, time_step);
+        update_xy_pos_by_velovity(pb, vb, time_step);
 
         auto end = std::chrono::system_clock::now();
         std::chrono::duration<double> full_elapsed = end-start;
         std::chrono::duration<double> last_elapsed = end-last;
-        if(last_elapsed.count() >= 1 || (offset % 10) == 0) {
-            double fps = ((count - last_count) / last_elapsed.count());
-            offset_step = 50 / fps + 1;
-            std::cout << "sec: " << full_elapsed.count() << " fps: " << fps << " step: " << offset_step << std::endl;
+        if(!run || last_elapsed.count() >= 1) {
+            int frames = count - last_count;
+            double fps = ((double)frames) / last_elapsed.count();
+
+            std::cout << "sec: " << full_elapsed.count() << " fps: " << fps << " time step: " << time_step << std::endl;
+            std::cout << "\tpr: " << pr.mul(window_size) 
+                << ", vr: " << vr.mul(time_step * frames * window_size) 
+                << " / " << vr.mul(last_elapsed.count() * window_size) << std::endl;
+            std::cout << "\tpg: " << pg.mul(window_size) 
+                << ", vg: " << vg.mul(time_step * frames * window_size) 
+                << " / " << vg.mul(last_elapsed.count() * window_size) << std::endl;
+            std::cout << "\tpb: " << pb.mul(window_size) 
+                << ", vb: " << vb.mul(time_step * frames * window_size) 
+                << " / " << vb.mul(last_elapsed.count() * window_size) << std::endl;
+
+            time_step = frames > 0 ? 1 / (last_elapsed.count() * frames) : 0;
+
             last = end;
             last_count = count;
         }
-    }    
+    }
+
+    SDL_FreeSurface(img);
+    SDL_FreeSurface(scr);
 
     SDL_DestroyWindow(win);
     SDL_Quit();
