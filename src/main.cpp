@@ -11,6 +11,7 @@
 #include <math.h>
 #include <random>
 #include <thread>
+#include <list>
 
 #include <SDL.h>
 
@@ -26,8 +27,8 @@ struct Pixel32 {
 
 #pragma pack(pop)   /* restore original alignment from stack */
 
-const int window_width = 512;
-const int window_height = 256;
+const int window_width = 1300;
+const int window_height = 700;
 const int window_size = window_width < window_height ? window_width : window_height;
 const double x_limit = double(window_width) / window_size;
 const double y_limit = double(window_height) / window_size;
@@ -113,12 +114,12 @@ double cap(const double& x)
 
 double inv_sqr(const double &x)
 {
-    return fabs(x) < 1e-8 ? 0 : 1/sqr(x);
+    return fabs(x) < 1e-8 ? 1e8 : 1/sqr(x);
 }
 
 double inv(const double &x)
 {
-    return fabs(x) < 1e-4 ? 0 : 1/x;
+    return fabs(x) < 1e-4 ? 1e4 : 1/x;
 }
 
 double edge_force(const double &p, const double &l)
@@ -160,6 +161,31 @@ unsigned char to_lum(const struct XY& pos, const struct XY& p, const struct XY& 
     double r2 = v.rad2();
     return d2 < r2 ? (unsigned char)(((r2 - d2) / r2) * 0xff) : 0x00;
 
+}
+
+void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const struct XY &pg, const struct XY &pb)
+{
+    for(int y = from; y < to && y < img->h; ++y) {
+        for(int x = 0; x < img->w; ++x) {
+            XY pos(double(x) / window_size, double(y) / window_size);
+            unsigned char* pixel = (unsigned char*)(img->pixels) + x * 4 + y * img->pitch;
+
+            double dr = pos.dist2(pr);
+            double dg = pos.dist2(pg);
+            double db = pos.dist2(pb);
+            double d = (inv(dr)+inv(dg)+inv(db))/3.0;
+            double dp = inv_sqr(10-d*0.5) + d*0.001;
+            double dpr = inv(dr*20);
+            double dpg = inv(dg*20);
+            double dpb = inv(db*20);
+
+            unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
+            unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
+            unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
+
+            *((Uint32*)pixel) = SDL_MapRGBA(img->format, lumr, lumg, lumb, 0x00);
+        }
+    }
 }
 
 int main(int argc, const char** argv)
@@ -215,27 +241,19 @@ int main(int argc, const char** argv)
         ++count;
 
         SDL_LockSurface(img);
-        for(int y = 0; y < img->h; ++y) {
-            for(int x = 0; x < img->w; ++x) {
-                // XY pos(double(x - ((window_width-window_size)>>1)) / window_size, double(y - ((window_height-window_size)>>1)) / window_size);
-                XY pos(double(x) / window_size, double(y) / window_size);
-                unsigned char* pixel = (unsigned char*)(img->pixels) + x * 4 + y * img->pitch;
 
-                double dr = pos.dist2(pr);
-                double dg = pos.dist2(pg);
-                double db = pos.dist2(pb);
-                double d = (inv(dr)+inv(dg)+inv(db))/3.0;
-                double dp = inv_sqr(10-d*0.5) + d*0.001;
-                double dpr = inv(dr*20);
-                double dpg = inv(dg*20);
-                double dpb = inv(db*20);
-                unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
-                unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
-                unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
+        int h_off = (img->h / (std::thread::hardware_concurrency()+1)) + 1;
+        int h = 0;
 
-                *((Uint32*)pixel) = SDL_MapRGBA(img->format, lumr, lumg, lumb, 0x00);
-            }
+        std::list< std::thread > threads;
+        while(h + h_off < img->h) {
+            threads.push_back(std::thread([&,h](){fill_pixels(img, h, h+h_off, pr, pg, pb);}));
+            h += h_off;
         }
+        threads.push_back(std::thread([&,h](){fill_pixels(img, h, img->h, pr, pg, pb);}));
+        for(auto i = threads.begin(); i != threads.end(); ++i)
+            (*i).join();
+
         SDL_UnlockSurface(img);
 
         SDL_BlitSurface(img, nullptr, scr, nullptr);
