@@ -27,8 +27,8 @@ struct Pixel32 {
 
 #pragma pack(pop)   /* restore original alignment from stack */
 
-const int window_width = 1300;
-const int window_height = 700;
+const int window_width = 1024;
+const int window_height = 512;
 const int window_size = window_width < window_height ? window_width : window_height;
 const double x_limit = double(window_width) / window_size;
 const double y_limit = double(window_height) / window_size;
@@ -199,7 +199,7 @@ int main(int argc, const char** argv)
         return 1;
     }
 
-    SDL_Window *win = SDL_CreateWindow("Hello World!", 100, 100, window_width, window_height, SDL_WINDOW_SHOWN);
+    SDL_Window *win = SDL_CreateWindow("Hellow World!", 100, 100, window_width, window_height, SDL_WINDOW_SHOWN);
     if (win == nullptr){
         std::cout << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
         SDL_Quit();
@@ -280,16 +280,7 @@ int main(int argc, const char** argv)
             int frames = count - last_count;
             double fps = ((double)frames) / last_elapsed.count();
 
-            std::cout << "sec: " << full_elapsed.count() << " fps: " << fps << " time step: " << time_step << std::endl;
-            std::cout << "\tpr: " << pr.mul(window_size) 
-                << ", vr: " << vr.mul(time_step * frames * window_size) 
-                << " / " << vr.mul(last_elapsed.count() * window_size) << std::endl;
-            std::cout << "\tpg: " << pg.mul(window_size) 
-                << ", vg: " << vg.mul(time_step * frames * window_size) 
-                << " / " << vg.mul(last_elapsed.count() * window_size) << std::endl;
-            std::cout << "\tpb: " << pb.mul(window_size) 
-                << ", vb: " << vb.mul(time_step * frames * window_size) 
-                << " / " << vb.mul(last_elapsed.count() * window_size) << std::endl;
+            SDL_SetWindowTitle(win, ("Hello World! FPS: " + boost::lexical_cast<std::string>(fps)).c_str());
 
             time_step = frames > 0 ? 1 / (last_elapsed.count() * frames) : 0;
 
