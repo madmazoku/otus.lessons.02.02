@@ -26,7 +26,12 @@ struct Pixel32 {
 
 #pragma pack(pop)   /* restore original alignment from stack */
 
-const int window_size = 256;
+const int window_width = 512;
+const int window_height = 256;
+const int window_size = window_width < window_height ? window_width : window_height;
+const double x_limit = double(window_width) / window_size;
+const double y_limit = double(window_height) / window_size;
+
 template<typename T> T sqr(const T& x) { return x * x; }
 
 template double sqr<double>(const double&);
@@ -101,27 +106,47 @@ double sgn(const double &x)
     return x < 0.0 ? -1.0 : x > 0.0 ? 1.0 : 0.0;
 }
 
+double cap(const double& x)
+{
+    return x < 0.0 ? 0.0 : x > 1.0 ? 1.0 : x;
+}
+
+double inv_sqr(const double &x)
+{
+    return fabs(x) < 1e-8 ? 0 : 1/sqr(x);
+}
+
+double inv(const double &x)
+{
+    return fabs(x) < 1e-4 ? 0 : 1/x;
+}
+
+double edge_force(const double &p, const double &l)
+{
+    return (inv(p+0.5)-inv(l-p+0.5));
+}
+
 void update_xy_pos_by_velovity(struct XY &pos, struct XY &vel, double time_step)
 {
-    double ax = ((1.0 - 2 * pos.x)*2 - vel.x*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
-    double ay = ((1.0 - 2 * pos.y)*2 - vel.y*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
+    double ax = (edge_force(pos.x, x_limit) - vel.x*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
+    double ay = (edge_force(pos.y, y_limit) - vel.y*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
     vel.x += ax*time_step;
     vel.y += ay*time_step;
-    if(vel.rad() < 10.0 / window_size)
-        vel.rand_angle(500.0/window_size);
+    if(vel.rad() < (x_limit+y_limit)*0.01)
+        vel.rand_angle((x_limit+y_limit)*0.4);
 
     pos.x += vel.x * time_step;
     pos.y += vel.y * time_step;
-    if(pos.x > 1.0) {
-        pos.x = 1.0;
+    if(pos.x > x_limit) {
+        pos.x = x_limit;
         vel.x = -vel.x;
     }
     if(pos.x < 0.0) {
         pos.x = 0.0;
         vel.x = -vel.x;
     }
-    if(pos.y > 1.0) {
-        pos.y = 1.0;
+    if(pos.y > y_limit) {
+        pos.y = y_limit;
         vel.y = -vel.y;
     }
     if(pos.y < 0.0) {
@@ -137,16 +162,6 @@ unsigned char to_lum(const struct XY& pos, const struct XY& p, const struct XY& 
 
 }
 
-double cap(const double& x)
-{
-    return x < 0.0 ? 0.0 : x > 1.0 ? 1.0 : x;
-}
-
-double inv_sqr(const double &x)
-{
-    return fabs(x) < 1e-8 ? 0 : 1/sqr(x);
-}
-
 int main(int argc, const char** argv)
 {
     auto console = spdlog::stdout_logger_st("console");
@@ -158,7 +173,7 @@ int main(int argc, const char** argv)
         return 1;
     }
 
-    SDL_Window *win = SDL_CreateWindow("Hello World!", 100, 100, window_size, window_size, SDL_WINDOW_SHOWN);
+    SDL_Window *win = SDL_CreateWindow("Hello World!", 100, 100, window_width, window_height, SDL_WINDOW_SHOWN);
     if (win == nullptr){
         std::cout << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
         SDL_Quit();
@@ -166,15 +181,13 @@ int main(int argc, const char** argv)
     }
 
     SDL_Surface *scr = SDL_GetWindowSurface(win);
-    SDL_Surface *img = SDL_CreateRGBSurface(0, window_size, window_size, 32, 0, 0, 0, 0);
+    SDL_Surface *img = SDL_CreateRGBSurface(0, scr->w, scr->h, 32, 0, 0, 0, 0);
 
     std::cout << "Screen: " << scr << std::endl;
     std::cout << "Image: " << img << std::endl;
 
     auto start = std::chrono::system_clock::now();
     auto last = start;
-
-    SDL_Rect rect = { 0, 0, window_size, window_size };
 
     int count = 0;
     int last_count = count;
@@ -185,9 +198,12 @@ int main(int argc, const char** argv)
     XY pr, pb, pg;
     XY vr, vb, vg;
 
-    pr.rand(XY(0.5), XY(0.5));
-    pg.rand(XY(0.5), XY(0.5));
-    pb.rand(XY(0.5), XY(0.5));
+    XY off(x_limit*0.5,y_limit*0.5);
+    XY amp(x_limit*0.4,y_limit*0.4);
+
+    pr.rand(off, amp);
+    pg.rand(off, amp);
+    pb.rand(off, amp);
 
     vr.rand_angle(100.0 / window_size);
     vg.rand_angle(100.0 / window_size);
@@ -201,17 +217,18 @@ int main(int argc, const char** argv)
         SDL_LockSurface(img);
         for(int y = 0; y < img->h; ++y) {
             for(int x = 0; x < img->w; ++x) {
+                // XY pos(double(x - ((window_width-window_size)>>1)) / window_size, double(y - ((window_height-window_size)>>1)) / window_size);
                 XY pos(double(x) / window_size, double(y) / window_size);
                 unsigned char* pixel = (unsigned char*)(img->pixels) + x * 4 + y * img->pitch;
 
-                double dr = pos.dist(pr);
-                double dg = pos.dist(pg);
-                double db = pos.dist(pb);
-                double d = (inv_sqr(dr)+inv_sqr(dg)+inv_sqr(db))/3.0;
-                double dp = inv_sqr(3-d*0.3) + d*0.1;
-                double dpr = inv_sqr(dr*20);
-                double dpg = inv_sqr(dg*20);
-                double dpb = inv_sqr(db*20);
+                double dr = pos.dist2(pr);
+                double dg = pos.dist2(pg);
+                double db = pos.dist2(pb);
+                double d = (inv(dr)+inv(dg)+inv(db))/3.0;
+                double dp = inv_sqr(10-d*0.5) + d*0.001;
+                double dpr = inv(dr*20);
+                double dpg = inv(dg*20);
+                double dpb = inv(db*20);
                 unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
                 unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
                 unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
