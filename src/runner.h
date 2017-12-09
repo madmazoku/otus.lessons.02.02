@@ -43,10 +43,12 @@ public:
                 {
                     std::unique_lock<std::mutex> lock_thread_loop(thread_loop_mutex);
                     if(--threads_active == 0) {
-                        process = false;
                         thread_loop_cv.notify_all();
                     }
                     thread_loop_cv.wait(lock_thread_loop, [&](){ return !process; });
+                    if(--threads_active == 0) {
+                        thread_loop_cv.notify_all();
+                    }
                 }
 
             }
@@ -64,6 +66,10 @@ public:
     void run() {
         std::unique_lock<std::mutex> lock_thread_loop(thread_loop_mutex);
         process = true;
+        threads_active += threads.size();
+        thread_loop_cv.notify_all();
+        thread_loop_cv.wait(lock_thread_loop, [&](){ return threads_active == 0; });
+        process = false;
         threads_active += threads.size();
         thread_loop_cv.notify_all();
         thread_loop_cv.wait(lock_thread_loop, [&](){ return threads_active == 0; });

@@ -192,7 +192,7 @@ void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const 
     }
 }
 
-#define USE_RUNNER
+// #define USE_RUNNER
 
 int main(int argc, const char** argv)
 {
@@ -249,7 +249,9 @@ int main(int argc, const char** argv)
     int h = 0;
 
     while(h < img->h) {
-        r.add([&,h](){fill_pixels(img, h, h+h_off, pr, pg, pb);});
+        r.add([&,h](){ 
+            fill_pixels(img, h, h+h_off, pr, pg, pb);
+        });
         h += h_off;
     }
 
@@ -271,7 +273,9 @@ int main(int argc, const char** argv)
 
         std::list<std::thread> threads;
         while(h < img->h) {
-            threads.push_back(std::thread([&,h](){fill_pixels(img, h, h+h_off, pr, pg, pb);}));
+            threads.push_back(std::thread([&,h](){ 
+                fill_pixels(img, h, h+h_off, pr, pg, pb); 
+            }));
             h += h_off;
         }
         for(auto &t : threads)
