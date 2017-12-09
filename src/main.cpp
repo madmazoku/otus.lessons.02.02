@@ -3,6 +3,7 @@
 #include <boost/lexical_cast.hpp>
 
 #include <chrono>
+#include <ctime>
 
 #include "../bin/version.h"
 
@@ -31,8 +32,8 @@ struct Pixel32 {
 
 #pragma pack(pop)   /* restore original alignment from stack */
 
-const int window_width = 1024;
-const int window_height = 512;
+const int window_width = 1300;
+const int window_height = 700;
 const int window_size = window_width < window_height ? window_width : window_height;
 const double x_limit = double(window_width) / window_size;
 const double y_limit = double(window_height) / window_size;
@@ -58,8 +59,8 @@ struct XY {
 
     void rand(const struct XY &offset, const struct XY &amplitude) 
     { 
-        x = urd(gen) * amplitude.x + offset.x;
-        y = urd(gen) * amplitude.y + offset.y;
+        x = (urd(gen) - 0.5) * amplitude.x * 2.0 + offset.x;
+        y = (urd(gen) - 0.5) * amplitude.y + offset.y;
     }
     void rand_angle(const double &amplitude)
     {
@@ -118,12 +119,12 @@ double cap(const double& x)
 
 double inv_sqr(const double &x)
 {
-    return fabs(x) < 1e-8 ? 1e8 : 1/sqr(x);
+    return fabs(x) < 1e-4 ? 1e8 : 1/sqr(x);
 }
 
 double inv(const double &x)
 {
-    return fabs(x) < 1e-4 ? 1e4 : 1/x;
+    return fabs(x) < 1e-4 ? 1e4 : 1/fabs(x);
 }
 
 double edge_force(const double &p, const double &l)
@@ -133,11 +134,11 @@ double edge_force(const double &p, const double &l)
 
 void update_xy_pos_by_velovity(struct XY &pos, struct XY &vel, double time_step)
 {
-    double ax = (edge_force(pos.x, x_limit) - vel.x*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
-    double ay = (edge_force(pos.y, y_limit) - vel.y*0.5 +sgn(vel.x)*fabs(vel.y)*0.1);
+    double ax = (edge_force(pos.x, x_limit) - vel.x*0.5);
+    double ay = (edge_force(pos.y, y_limit) - vel.y*0.5);
     vel.x += ax*time_step;
     vel.y += ay*time_step;
-    if(vel.rad() < (x_limit+y_limit)*0.01)
+    if(vel.rad() < (x_limit+y_limit)*0.005)
         vel.rand_angle((x_limit+y_limit)*0.4);
 
     pos.x += vel.x * time_step;
@@ -160,34 +161,36 @@ void update_xy_pos_by_velovity(struct XY &pos, struct XY &vel, double time_step)
     }
 }
 
-unsigned char to_lum(const struct XY& pos, const struct XY& p, const struct XY& v) {
-    double d2 = pos.dist2(p);
-    double r2 = v.rad2();
-    return d2 < r2 ? (unsigned char)(((r2 - d2) / r2) * 0xff) : 0x00;
-
+bool check_box(const XY &pos, const XY &p, const double &d) {
+    return fabs(pos.x-p.x) < d && fabs(pos.y-p.y)<d;
 }
 
 void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const struct XY &pg, const struct XY &pb)
 {
-    for(int y = from; y < to && y < img->h; ++y) {
+    to = to < img->h ? to : img->h;
+    SDL_memset((unsigned char*)(img->pixels) + from * img->pitch, 0, (to - from) * img->pitch);
+
+    for(int y = from; y < to; ++y) {
         for(int x = 0; x < img->w; ++x) {
             XY pos(double(x) / window_size, double(y) / window_size);
             unsigned char* pixel = (unsigned char*)(img->pixels) + x * 4 + y * img->pitch;
 
-            double dr = pos.dist2(pr);
-            double dg = pos.dist2(pg);
-            double db = pos.dist2(pb);
-            double d = (inv(dr)+inv(dg)+inv(db))/3.0;
-            double dp = inv_sqr(10-d*0.5) + d*0.001;
-            double dpr = inv(dr*20);
-            double dpg = inv(dg*20);
-            double dpb = inv(db*20);
+            if(check_box(pos, pr, 0.4) || check_box(pos, pg, 0.4) || check_box(pos, pb, 0.4)) {
+                double dr = pos.dist2(pr);
+                double dg = pos.dist2(pg);
+                double db = pos.dist2(pb);
+                double d = (inv(dr)+inv(dg)+inv(db))/3.0;
+                double dp = inv_sqr(10-d*0.5) + d*0.001;
+                double dpr = inv(dr*20);
+                double dpg = inv(dg*20);
+                double dpb = inv(db*20);
 
-            unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
-            unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
-            unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
+                unsigned short lumr = (unsigned char)((0.0 + cap(dpr * dp)) * 0xff);
+                unsigned short lumg = (unsigned char)((0.0 + cap(dpg * dp)) * 0xff);
+                unsigned short lumb = (unsigned char)((0.0 + cap(dpb * dp)) * 0xff);
+                *((Uint32*)pixel) = SDL_MapRGBA(img->format, lumr, lumg, lumb, 0x00);
+            }
 
-            *((Uint32*)pixel) = SDL_MapRGBA(img->format, lumr, lumg, lumb, 0x00);
         }
     }
 }
@@ -196,6 +199,8 @@ void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const 
 
 int main(int argc, const char** argv)
 {
+    gen.seed(std::time(nullptr));
+
     auto console = spdlog::stdout_logger_st("console");
     auto wellcome = std::string("Application started, \"") + argv[0] + "\" version: " + boost::lexical_cast<std::string>(version());
     console->info(wellcome);
@@ -205,7 +210,14 @@ int main(int argc, const char** argv)
         return 1;
     }
 
-    SDL_Window *win = SDL_CreateWindow("Hellow World!", 100, 100, window_width, window_height, SDL_WINDOW_SHOWN);
+    SDL_Window *win = SDL_CreateWindow(
+        "Hellow World!", 
+        SDL_WINDOWPOS_CENTERED, 
+        SDL_WINDOWPOS_CENTERED, 
+        window_width, 
+        window_height, 
+        SDL_WINDOW_SHOWN
+    );
     if (win == nullptr){
         std::cout << "SDL_CreateWindow Error: " << SDL_GetError() << std::endl;
         SDL_Quit();
@@ -241,7 +253,6 @@ int main(int argc, const char** argv)
     vg.rand_angle(100.0 / window_size);
     vb.rand_angle(100.0 / window_size);
 
-
 #ifdef USE_RUNNER
     Runner r;
 
@@ -250,7 +261,12 @@ int main(int argc, const char** argv)
 
     while(h < img->h) {
         r.add([&,h](){ 
+            // auto start = std::chrono::high_resolution_clock::now();
             fill_pixels(img, h, h+h_off, pr, pg, pb);
+            // auto end = std::chrono::high_resolution_clock::now();
+            // auto elapsed = end - start;
+            // auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+            // log(__FUNCTION__, (boost::lexical_cast<std::string>(elapsed_ms.count())).c_str());
         });
         h += h_off;
     }
@@ -273,8 +289,17 @@ int main(int argc, const char** argv)
 
         std::list<std::thread> threads;
         while(h < img->h) {
-            threads.push_back(std::thread([&,h](){ 
-                fill_pixels(img, h, h+h_off, pr, pg, pb); 
+            std::function<void (void)> lambda = [&,h](){ 
+                // auto start = std::chrono::high_resolution_clock::now();
+                fill_pixels(img, h, h+h_off, pr, pg, pb);
+                // auto end = std::chrono::high_resolution_clock::now();
+                // auto elapsed = end - start;
+                // auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+                // log(__FUNCTION__, (boost::lexical_cast<std::string>(elapsed_ms.count())).c_str());
+            };
+
+            threads.push_back(std::thread([&,lambda](){ 
+                lambda(); 
             }));
             h += h_off;
         }

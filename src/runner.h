@@ -5,6 +5,13 @@
 #include <condition_variable>
 #include <list>
 
+
+    void log(const char* f, const char* m) {
+        std::stringstream ss;
+        ss << std::this_thread::get_id() << " [" << f << "]: " << m << std::endl;
+        std::cout << ss.str();
+    }
+
 class Runner {
 private:
     std::list<std::thread> threads;
