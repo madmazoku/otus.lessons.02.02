@@ -11,9 +11,13 @@
 #include <math.h>
 #include <random>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <list>
 
 #include <SDL.h>
+
+#include "runner.h"
 
 #pragma pack(push)  /* push current alignment to stack */
 #pragma pack(1)     /* set alignment to 1 byte boundary */
@@ -188,6 +192,8 @@ void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const 
     }
 }
 
+// #define USE_RUNNER
+
 int main(int argc, const char** argv)
 {
     auto console = spdlog::stdout_logger_st("console");
@@ -235,6 +241,21 @@ int main(int argc, const char** argv)
     vg.rand_angle(100.0 / window_size);
     vb.rand_angle(100.0 / window_size);
 
+
+#ifdef USE_RUNNER
+    Runner r;
+
+    int h_off = (img->h / (std::thread::hardware_concurrency()+1)) + 1;
+    int h = 0;
+
+    while(h < img->h) {
+        r.add([&,h](){fill_pixels(img, h, h+h_off, pr, pg, pb);});
+        h += h_off;
+    }
+
+    r.start();
+#endif
+
     bool run = true;
     while(run)
     {
@@ -242,17 +263,20 @@ int main(int argc, const char** argv)
 
         SDL_LockSurface(img);
 
+#ifdef USE_RUNNER
+        r.run();
+#else
         int h_off = (img->h / (std::thread::hardware_concurrency()+1)) + 1;
         int h = 0;
 
-        std::list< std::thread > threads;
-        while(h + h_off < img->h) {
+        std::list<std::thread> threads;
+        while(h < img->h) {
             threads.push_back(std::thread([&,h](){fill_pixels(img, h, h+h_off, pr, pg, pb);}));
             h += h_off;
         }
-        threads.push_back(std::thread([&,h](){fill_pixels(img, h, img->h, pr, pg, pb);}));
-        for(auto i = threads.begin(); i != threads.end(); ++i)
-            (*i).join();
+        for(auto &t : threads)
+            t.join();
+#endif
 
         SDL_UnlockSurface(img);
 
@@ -265,7 +289,9 @@ int main(int argc, const char** argv)
              || event.type == SDL_KEYDOWN
              || event.type == SDL_KEYUP) {
                 run = false;
-                break;
+#ifdef USE_RUNNER
+                r.stop();
+#endif
             }
         }
 
@@ -288,6 +314,10 @@ int main(int argc, const char** argv)
             last_count = count;
         }
     }
+
+#ifdef USE_RUNNER
+    r.join();
+#endif
 
     SDL_FreeSurface(img);
     SDL_FreeSurface(scr);
