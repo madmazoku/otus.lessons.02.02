@@ -192,7 +192,7 @@ void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const 
     }
 }
 
-// #define USE_RUNNER
+#define USE_RUNNER
 
 int main(int argc, const char** argv)
 {
