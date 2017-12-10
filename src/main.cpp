@@ -19,6 +19,7 @@
 #include <SDL.h>
 
 #include "runner.h"
+#include "queue_processor.h"
 
 #pragma pack(push)  /* push current alignment to stack */
 #pragma pack(1)     /* set alignment to 1 byte boundary */
@@ -32,8 +33,8 @@ struct Pixel32 {
 
 #pragma pack(pop)   /* restore original alignment from stack */
 
-const int window_width = 1300;
-const int window_height = 700;
+const int window_width = 1024;
+const int window_height = 512;
 const int window_size = window_width < window_height ? window_width : window_height;
 const double x_limit = double(window_width) / window_size;
 const double y_limit = double(window_height) / window_size;
@@ -196,6 +197,7 @@ void fill_pixels(SDL_Surface* img, int from, int to, const struct XY &pr, const 
 }
 
 // #define USE_RUNNER
+#define USE_QP
 
 int main(int argc, const char** argv)
 {
@@ -272,17 +274,58 @@ int main(int argc, const char** argv)
     }
 
     r.start();
+#elif defined(USE_QP)
+    QueueProcessor qp;
+    qp.start();
+
+    // int h_off = img->h >> 5;
+    // int h = 0;
+
+    // while(h < img->h) {
+    //     std::function<void (void)> lambda = [&,h](){ 
+    //         // auto start = std::chrono::high_resolution_clock::now();
+    //         fill_pixels(img, h, h+h_off, pr, pg, pb);
+    //         // auto end = std::chrono::high_resolution_clock::now();
+    //         // auto elapsed = end - start;
+    //         // auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+    //         // log(__FUNCTION__, (boost::lexical_cast<std::string>(elapsed_ms.count())).c_str());
+    //     };
+
+    //     qp.add(lambda);
+    //     h += h_off;
+    // }
+
 #endif
 
     bool run = true;
     while(run)
     {
+        auto loop_start = std::chrono::system_clock::now();
         ++count;
 
         SDL_LockSurface(img);
 
 #ifdef USE_RUNNER
         r.run();
+#elif defined(USE_QP)
+        int h_off = (img->h >> 2) + 1;
+        int h = 0;
+
+        while(h < img->h) {
+            std::function<void (void)> lambda = [&,h](){ 
+                // auto start = std::chrono::high_resolution_clock::now();
+                fill_pixels(img, h, h+h_off, pr, pg, pb);
+                // auto end = std::chrono::high_resolution_clock::now();
+                // auto elapsed = end - start;
+                // auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+                // log(__FUNCTION__, (boost::lexical_cast<std::string>(elapsed_ms.count())).c_str());
+            };
+
+            qp.add(lambda);
+            h += h_off;
+        }
+        // qp.rewind();
+        qp.wait();
 #else
         int h_off = (img->h / (std::thread::hardware_concurrency()+1)) + 1;
         int h = 0;
@@ -320,6 +363,8 @@ int main(int argc, const char** argv)
                 run = false;
 #ifdef USE_RUNNER
                 r.stop();
+#elif defined(USE_QP)
+                qp.stop();
 #endif
             }
         }
@@ -331,13 +376,17 @@ int main(int argc, const char** argv)
         auto end = std::chrono::system_clock::now();
         std::chrono::duration<double> full_elapsed = end-start;
         std::chrono::duration<double> last_elapsed = end-last;
+        std::chrono::duration<double> loop_elapsed = end-loop_start;
+        time_step = loop_elapsed.count();
         if(!run || last_elapsed.count() >= 1) {
             int frames = count - last_count;
             double fps = ((double)frames) / last_elapsed.count();
 
             SDL_SetWindowTitle(win, ("Hello World! FPS: " + boost::lexical_cast<std::string>(fps)).c_str());
 
-            time_step = frames > 0 ? 1 / (last_elapsed.count() * frames) : 0;
+            std::cout << "[ " << full_elapsed.count() << " / " << count << "] fps: " << fps << std::endl;
+
+            // time_step = frames > 0 ? 1 / (last_elapsed.count() * frames) : 0;
 
             last = end;
             last_count = count;
@@ -346,6 +395,8 @@ int main(int argc, const char** argv)
 
 #ifdef USE_RUNNER
     r.join();
+#elif defined(USE_QP)
+    qp.join();
 #endif
 
     SDL_FreeSurface(img);
